@@ -1,10 +1,13 @@
 // Copyright by Contributors
 // implementations in ctypes
+#include <assert.h>
 #include <rabit/base.h>
 #include <cstring>
 #include <string>
 #include "rabit/rabit.h"
 #include "rabit/c_api.h"
+
+int tracer_t::indentation = 0;
 
 namespace rabit {
 namespace c_api {

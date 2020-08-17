@@ -45,7 +45,11 @@
 // engine definition of rabit, defines internal implementation
 // to use rabit interface, there is no need to read engine.h
 // rabit.h and serializable.h are enough to use the interface
-#include "./internal/engine.h"
+#ifdef USE_OCCL
+#include "./internal/engine_occl.h"
+#else
+//#include "./internal/engine.h"
+#endif
 
 /*! \brief rabit namespace */
 namespace rabit {

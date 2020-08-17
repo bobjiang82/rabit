@@ -11,6 +11,8 @@ option(RABIT_BUILD_TESTS "Build rabit tests" OFF)
 option(RABIT_BUILD_MPI "Build MPI" OFF)
 option(RABIT_BUILD_DMLC "Include DMLC_CORE in build" OFF)
 option(RABIT_WITH_R_LIB "Fit the strict environment of R" OFF)
+#option(USE_OCCL "Build OCCL" ON)
+add_definitions(-DUSE_OCCL)
 
 option(DMLC_ROOT "Specify root of external dmlc core.")
 # by default point to xgboost/dmlc-core
@@ -26,21 +28,38 @@ if(R_LIB OR MINGW OR WIN32)
           POSITION_INDEPENDENT_CODE ON)
 else()
   find_package(Threads REQUIRED)
-  add_library(rabit_empty src/engine_empty.cc src/c_api.cc)
-  add_library(rabit_base src/allreduce_base.cc src/engine_base.cc src/c_api.cc)
+  find_package(OpenSSL REQUIRED)
+#  add_library(rabit_empty src/engine_empty.cc src/c_api.cc)
+#  add_library(rabit_base src/allreduce_base.cc src/engine_base.cc src/c_api.cc)
 
-  add_library(rabit src/allreduce_base.cc src/allreduce_robust.cc src/engine.cc src/c_api.cc)
-  add_library(rabit_mock_static src/allreduce_base.cc src/allreduce_robust.cc src/engine_mock.cc src/c_api.cc)
-  add_library(rabit_mock SHARED src/allreduce_base.cc src/allreduce_robust.cc src/engine_mock.cc src/c_api.cc)
-  target_link_libraries(rabit Threads::Threads)
-  target_link_libraries(rabit_mock_static Threads::Threads)
-  target_link_libraries(rabit_mock Threads::Threads)
+#  add_library(rabit src/allreduce_base.cc src/allreduce_robust.cc src/engine.cc src/c_api.cc)
+#  add_library(rabit_mock_static src/allreduce_base.cc src/allreduce_robust.cc src/engine_mock.cc src/c_api.cc)
+#  add_library(rabit_mock SHARED src/allreduce_base.cc src/allreduce_robust.cc src/engine_mock.cc src/c_api.cc)
+  add_library(rabit_occl src/engine_occl.cc src/c_api.cc)
+#  target_link_libraries(rabit Threads::Threads)
+#  target_link_libraries(rabit_mock_static Threads::Threads)
+#  target_link_libraries(rabit_mock Threads::Threads)
+  target_link_libraries(rabit_occl
+    -Wl,--whole-archive
+    $ENV{CCL_ROOT}/lib/libccl.a
+    -Wl,--no-whole-archive
+    ${OPENSSL_CRYPTO_LIBRARY}
+  )
+  target_include_directories(rabit_occl SYSTEM PRIVATE ${OPENSSL_INCLUDE_DIR})
+#  target_link_libraries(rabit_base PRIVATE ${OPENSSL_LIBRARY} ${OPENSSL_LIBRARIES} ${OPENSSL_CRYPTO_LIBRARY})
 
-  set(rabit_libs rabit rabit_base rabit_empty rabit_mock rabit_mock_static)
-  set_target_properties(rabit rabit_base rabit_empty rabit_mock rabit_mock_static
+  set(rabit_libs rabit_occl)
+#  set(rabit_libs rabit rabit_base rabit_empty rabit_mock rabit_mock_static rabit_occl)
+#  set_target_properties(rabit rabit_base rabit_empty rabit_mock rabit_mock_static
+#    PROPERTIES CXX_STANDARD 11
+#    CXX_STANDARD_REQUIRED ON
+#    POSITION_INDEPENDENT_CODE ON)
+  set_target_properties(rabit_occl
     PROPERTIES CXX_STANDARD 11
     CXX_STANDARD_REQUIRED ON
-    POSITION_INDEPENDENT_CODE ON)
+    POSITION_INDEPENDENT_CODE ON
+#    LINK_FLAGS "-Wl,--whole-archive"
+    COMPILE_DEFINITIONS "USE_OCCL")
 ENDIF(R_LIB OR MINGW OR WIN32)
 
 if(RABIT_BUILD_MPI)
@@ -79,7 +98,9 @@ endif(DMLC_ROOT)
 foreach(lib ${rabit_libs})
   target_include_directories(${lib} PUBLIC
           "$<BUILD_INTERFACE:${rabit_SOURCE_DIR}/include>"
-          "$<BUILD_INTERFACE:${DMLC_ROOT}/include>")
+          "$<BUILD_INTERFACE:${rabit_SOURCE_DIR}/include/rabit/internal>"
+          "$<BUILD_INTERFACE:${DMLC_ROOT}/include>"
+          "$ENV{CCL_ROOT}/include")
 endforeach()
 
 if (RABIT_BUILD_TESTS)

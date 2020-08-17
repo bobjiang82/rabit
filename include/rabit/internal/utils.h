@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <vector>
+#include <iomanip>
+#include <openssl/md5.h>
 #include "dmlc/io.h"
 
 #ifndef RABIT_STRICT_CXX98_
@@ -57,6 +59,38 @@ typedef __int64 int64_t;
 #else
 #include <inttypes.h>
 #endif  // _MSC_VER
+
+#if 0 //trace debug
+#define RABIT_LOG_CALL tracer_t _token(__func__, __FILE__, __LINE__)
+
+struct tracer_t {
+    char const* funcname;
+    char const* filename;
+    int linenum;
+    static int indentation;
+    tracer_t(char const* funcname_, char const* filename_, int linenum_): \
+              funcname(funcname_), filename(filename_), linenum(linenum_) {
+      std::cout << "xgbtck ";
+      for (int i=0; i<indentation; i++)
+        std::cout << "   ";
+      indentation++;
+      std::cout << funcname << "() { " << filename << ":" << linenum << std::endl;
+    }
+    ~tracer_t() {
+      std::cout << "xgbtck ";
+      indentation--;
+      for (int i=0; i<indentation; i++)
+        std::cout << "   ";
+      std::cout << "} " << funcname << ", " << filename << ":" << linenum << std::endl;
+    }
+};
+#else
+#define RABIT_LOG_CALL __attribute__((unused)) tracer_t rlct;
+
+struct tracer_t {
+    static int indentation;
+};
+#endif
 
 namespace rabit {
 /*! \brief namespace for helper utils of the project */
@@ -142,6 +176,23 @@ inline int SPrintf(char *buf, size_t size, const char *fmt, ...) {
   int ret = vsnprintf(buf, size, fmt, args);
   va_end(args);
   return ret;
+}
+/*! \brief print data buffer/checksum */
+inline void BufPrint(const char *prompt, void *buf, size_t size) {
+#if 0
+  std::cout << prompt << " " << std::setw(5) << std::setfill(' ') << size << " B\tmd5: ";
+  unsigned char result[MD5_DIGEST_LENGTH];
+  MD5((unsigned char*)buf, size, result);
+  // MD5((unsigned char*)(buf-16), size+32, result);
+  for (long long c: result)
+    std::cout << std::setw(2) << std::setfill('0') << std::hex << (long long)c;
+
+  std::cout << std::dec << " data: ";
+  size_t bytestoprint = (size < 32) ? size : 32;
+  for (size_t i=0; i<bytestoprint; i++)
+    std::cout << std::setw(2) << std::setfill('0') << std::hex << (int)*((uint8_t *)buf + i) << " ";
+  std::cout << std::dec << std::endl;
+#endif
 }
 
 /*! \brief assert a condition is true, use this to handle debug information */

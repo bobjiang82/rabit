@@ -262,6 +262,11 @@ void Allgather(void* sendrecvbuf,
                    const char* _file = _FILE,
                    const int _line = _LINE,
                    const char* _caller = _CALLER);
+
+#ifdef USE_OCCL
+template<typename OP, typename BufType>
+void Allreduce_(BufType* buf, size_t count);
+#else
 /*!
  * \brief perform in-place Allreduce, on sendrecvbuf
  *   this is an internal function used by rabit to be able to compile with MPI
@@ -291,6 +296,7 @@ void Allreduce_(void *sendrecvbuf,
                 const char* _file = _FILE,
                 const int _line = _LINE,
                 const char* _caller = _CALLER);
+#endif
 /*!
  * \brief handle for customized reducer, used to handle customized reduce
  *  this class is mainly created for compatiblity issues with MPI's customized reduce
@@ -306,7 +312,11 @@ class ReduceHandle {
    *   with the type the reduce function needs to deal with
    *   the reduce function MUST be communicative
    */
-  void Init(IEngine::ReduceFunction redfunc, size_t type_nbytes);
+#ifdef USE_OCCL
+  void Init(ccl_reduction_fn_t cclredfunc, size_t type_nbytes);
+#else
+//  void Init(IEngine::ReduceFunction redfunc, size_t type_nbytes);
+#endif
   /*!
    * \brief customized in-place all reduce operation
    * \param sendrecvbuf the in place send-recv buffer
@@ -329,13 +339,22 @@ class ReduceHandle {
                  const int _line = _LINE,
                  const char* _caller = _CALLER);
   /*! \return the number of bytes occupied by the type */
-  static int TypeSize(const MPI::Datatype &dtype);
-
+#ifdef USE_OCCL
+  static int TypeSize(const ccl::datatype &dtype);
+#else
+//  static int TypeSize(const MPI::Datatype &dtype);
+#endif
  protected:
   // handle function field
   void *handle_;
   // reduce function of the reducer
-  IEngine::ReduceFunction *redfunc_;
+#ifdef USE_OCCL
+/* in_buf, in_count, inout_buf, out_count, dtype, context */
+//typedef ccl_status_t(*ccl_reduction_fn_t) (const void*, size_t, void*, size_t*, ccl_datatype_t, const ccl_fn_context_t*);
+  ccl_reduction_fn_t redfunc_;
+#else
+//  IEngine::ReduceFunction *redfunc_;
+#endif
   // handle to the type field
   void *htype_;
   // the created type in 4 bytes

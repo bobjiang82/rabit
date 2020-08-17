@@ -123,8 +123,8 @@ inline int GetWorldSize(void) {
   return engine::GetEngine()->GetWorldSize();
 }
 // whether rabit is distributed
-inline bool IsDistributed(void) {
-  return engine::GetEngine()->IsDistributed();
+inline bool IsDistributed(void) { //RABIT_LOG_CALL;
+  return true;  //engine::GetEngine()->IsDistributed();
 }
 // get the name of current processor
 inline std::string GetProcessorName(void) {
@@ -135,8 +135,13 @@ inline void Broadcast(void *sendrecv_data, size_t size, int root,
                       const char* _file,
                       const int _line,
                       const char* _caller) {
-  engine::GetEngine()->Broadcast(sendrecv_data, size, root,
-    _file, _line, _caller);
+#ifdef USE_OCCL
+  //std::cout << "Broadcast params: size: " << size << ", root: " << root << ", _file: " << _file << std::endl;
+  engine::Broadcast_(sendrecv_data, size, root);
+#else
+//  engine::GetEngine()->Broadcast(sendrecv_data, size, root,
+//    _file, _line, _caller);
+#endif
 }
 template<typename DType>
 inline void Broadcast(std::vector<DType> *sendrecv_data, int root,
@@ -176,9 +181,15 @@ inline void Allreduce(DType *sendrecvbuf, size_t count,
                       const char* _file,
                       const int _line,
                       const char* _caller) {
-  engine::Allreduce_(sendrecvbuf, sizeof(DType), count, op::Reducer<OP, DType>,
-                     engine::mpi::GetType<DType>(), OP::kType, prepare_fun, prepare_arg,
-                     _file, _line, _caller);
+#ifdef USE_OCCL
+  // std::cout << "xgbtck rabit::Allreduce() OCCL" << std::endl;
+  engine::Allreduce_<OP>(sendrecvbuf, count);
+#else
+//  std::cout << "xgbtck rabit::Allreduce() Origin" << std::endl;
+//  engine::Allreduce_(sendrecvbuf, sizeof(DType), count, op::Reducer<OP, DType>,
+//                     engine::mpi::GetType<DType>(), OP::kType, prepare_fun, prepare_arg,
+//                     _file, _line, _caller);
+#endif
 }
 
 // C++11 support for lambda prepare function
@@ -251,6 +262,39 @@ inline int VersionNumber(void) {
 // ---------------------------------
 // Code to handle customized Reduce
 // ---------------------------------
+#ifdef USE_OCCL
+// function to perform reduction for Reducer
+//typedef ccl_status_t(*ccl_reduction_fn_t) (const void*, size_t, void*, size_t*, ccl_datatype_t, const ccl_fn_context_t*);
+template<typename DType, void (*freduce)(DType &dst, const DType &src)>
+inline ccl_status_t ReducerSafe_(const void *src_, size_t len_, void *dst_, size_t* outcnt_,
+                         ccl_datatype_t, const ccl_fn_context_t*) {
+  const size_t kUnit = sizeof(DType);
+  const char *psrc = reinterpret_cast<const char*>(src_);
+  char *pdst = reinterpret_cast<char*>(dst_);
+
+  for (int i = 0; i < len_; ++i) {
+    DType tdst, tsrc;
+    // use memcpy to avoid alignment issue
+    std::memcpy(&tdst, pdst + (i * kUnit), sizeof(tdst));
+    std::memcpy(&tsrc, psrc + (i * kUnit), sizeof(tsrc));
+    freduce(tdst, tsrc);
+    std::memcpy(pdst + i * kUnit, &tdst, sizeof(tdst));
+  }
+  return ccl_status_t::ccl_status_success;
+}
+// function to perform reduction for Reducer
+template<typename DType, void (*freduce)(DType &dst, const DType &src)> // NOLINT(*)
+inline ccl_status_t ReducerAlign_(const void *src_, size_t len_, void *dst_, size_t* outcnt_,
+                          ccl_datatype_t, const ccl_fn_context_t*) {
+  const DType *psrc = reinterpret_cast<const DType*>(src_);
+  DType *pdst = reinterpret_cast<DType*>(dst_);
+  for (int i = 0; i < len_; ++i) {
+    freduce(pdst[i], psrc[i]);
+  }
+  return ccl_status_t::ccl_status_success;
+}
+#else
+/*
 // function to perform reduction for Reducer
 template<typename DType, void (*freduce)(DType &dst, const DType &src)>
 inline void ReducerSafe_(const void *src_, void *dst_, int len_, const MPI::Datatype &dtype) {
@@ -277,6 +321,8 @@ inline void ReducerAlign_(const void *src_, void *dst_,
     freduce(pdst[i], psrc[i]);
   }
 }
+*/
+#endif
 template<typename DType, void (*freduce)(DType &dst, const DType &src)>  // NOLINT(*)
 inline Reducer<DType, freduce>::Reducer(void) {
   // it is safe to directly use handle for aligned data types
@@ -297,6 +343,30 @@ inline void Reducer<DType, freduce>::Allreduce(DType *sendrecvbuf, size_t count,
     prepare_arg, _file, _line, _caller);
 }
 // function to perform reduction for SerializeReducer
+#ifdef USE_OCCL
+//typedef ccl_status_t(*ccl_reduction_fn_t) (const void*, size_t, void*, size_t*, ccl_datatype_t, const ccl_fn_context_t*);
+template<typename DType>
+inline ccl_status_t SerializeReducerFunc_(const void *src_, size_t len_, void *dst_, size_t* outcnt_,
+                                  const ccl_datatype_t dtype, const ccl_fn_context_t*) { RABIT_LOG_CALL;
+  // std::cout << "xgbtck SerializeReducerFunc_..." << std::endl;
+  int nbytes = engine::ReduceHandle::TypeSize((const ccl::datatype)dtype);
+  // std::cout << "xgbtck ReduceHandle::TypeSize(): " << nbytes << std::endl;
+  // temp space
+  for (size_t i = 0; i < len_; ++i) {
+    DType tsrc, tdst;
+    utils::MemoryFixSizeBuffer fsrc((char*)(src_) + i * nbytes, nbytes); // NOLINT(*)
+    utils::MemoryFixSizeBuffer fdst((char*)(dst_) + i * nbytes, nbytes); // NOLINT(*)
+    tsrc.Load(fsrc);
+    tdst.Load(fdst);
+    // govern const check
+    tdst.Reduce(static_cast<const DType &>(tsrc), nbytes);
+    fdst.Seek(0);
+    tdst.Save(fdst);
+  }
+  return ccl_status_t::ccl_status_success;
+}
+#else
+/*
 template<typename DType>
 inline void SerializeReducerFunc_(const void *src_, void *dst_,
                                   int len_, const MPI::Datatype &dtype) {
@@ -314,6 +384,8 @@ inline void SerializeReducerFunc_(const void *src_, void *dst_,
     tdst.Save(fdst);
   }
 }
+*/
+#endif
 template<typename DType>
 inline SerializeReducer<DType>::SerializeReducer(void) {
   handle_.Init(SerializeReducerFunc_<DType>, sizeof(DType));
